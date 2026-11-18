@@ -128,6 +128,12 @@ button { cursor:pointer; }
 .settings-form input:focus,.settings-form textarea:focus { border-color:#b8a9e8; box-shadow:0 0 0 3px #7659d812; }
 .settings-form .template-input { min-height:110px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; line-height:1.5; }
 .template-help { margin-top:-8px; color:#969189; font-size:9px; line-height:1.5; }
+.conversation-start { display:grid; gap:8px; width:min(330px,100%); margin-top:22px; }
+.conversation-start label { color:#514c46; font-size:10px; font-weight:680; }
+.conversation-start input { width:100%; padding:10px 11px; color:#35312d; background:#fff; border:1px solid #e7e4de; border-radius:8px; outline:none; font-size:11px; }
+.conversation-start input:focus { border-color:#b8a9e8; box-shadow:0 0 0 3px #7659d812; }
+.schema-summary { padding:8px 10px; color:#625b73; background:#f5f2fc; border:1px solid #ebe5fa; border-radius:8px; font-size:9px; line-height:1.5; overflow-wrap:anywhere; }
+.schema-select { width:100%; padding:9px 10px; color:#35312d; background:#fcfbf9; border:1px solid #e7e4de; border-radius:8px; font-size:11px; }
 .template-help code { padding:2px 4px; color:#5d438e; background:#f4f1fb; border-radius:4px; }
 .settings-error { margin:0; }
 .modal-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:6px; }
