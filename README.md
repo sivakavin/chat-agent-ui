@@ -1,26 +1,34 @@
 # Chat Agent UI
 
-A lightweight React/Vite chat UI for the Refund Management Agent backend.
+A generic React/Vite chat workspace for testing FastAPI and other JSON chat endpoints.
 
 ## Features
 
-- Chats with FastAPI at `POST /api/v1/chat`
-- Selects the demo account `siva`, `inba`, or `soundhu`
-- Checks backend health at `GET /health`
-- Starts a new thread for each conversation and account
-- Uses a local Vite proxy so backend secrets never enter the browser
+- Configure and save multiple chat endpoint profiles in the browser.
+- Customize the request JSON template with `{{message}}` and `{{thread_id}}`.
+- Select a response field with a dot path, such as `answer` or `choices.0.message.content`.
+- Render Markdown tables, lists, headings, code, and links in assistant responses.
+- Keep endpoint settings in browser local storage; no endpoint credentials are built into the UI.
 
 ## Run locally
 
-Start the backend separately at `http://127.0.0.1:8000`, then run:
+The default profile uses the Vite proxy path `/api/v1/chat`. The proxy sends requests to `http://127.0.0.1:8000`.
 
 ```sh
 npm install
 npm run dev
 ```
 
-Open the Vite URL, normally `http://localhost:5173`. The chat request body includes `message`, `thread_id`, and `user_name`.
+Open the Vite URL, normally `http://localhost:5173`. You can change the proxy target with `REFUND_API_URL` in a local `.env` file, or configure any full endpoint URL from the UI's endpoint settings.
 
-Set `REFUND_API_URL` in `.env` to change the Vite development proxy target. For a deployed backend, set `VITE_API_BASE_URL` to the API base URL and configure the backend's `FRONTEND_ORIGIN` to match the frontend origin.
+For remote endpoints, the endpoint must allow browser requests from the UI origin through CORS. Do not place API secrets in the request template. Add authentication only through a secure backend proxy.
 
-The UI uses the backend's sample accounts, which are selectors rather than authentication. It does not process real payments.
+## Default API shape
+
+The default request template sends:
+
+```json
+{"message":"...","thread_id":"..."}
+```
+
+The default response field is `answer`. Both can be changed per endpoint profile.
