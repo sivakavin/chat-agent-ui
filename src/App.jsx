@@ -66,12 +66,16 @@ function responseText(value) {
 }
 
 export default function App() {
-  const [endpoints, setEndpoints] = useState(loadEndpoints);
-  const [activeId, setActiveId] = useState(() => {
-    const savedId = localStorage.getItem(ACTIVE_ENDPOINT_KEY);
+  const [initialState] = useState(() => {
     const savedEndpoints = loadEndpoints();
-    return savedEndpoints.some((item) => item.id === savedId) ? savedId : savedEndpoints[0].id;
+    const savedId = localStorage.getItem(ACTIVE_ENDPOINT_KEY);
+    return {
+      endpoints: savedEndpoints,
+      activeId: savedEndpoints.some((item) => item.id === savedId) ? savedId : savedEndpoints[0].id,
+    };
   });
+  const [endpoints, setEndpoints] = useState(initialState.endpoints);
+  const [activeId, setActiveId] = useState(initialState.activeId);
   const [threadId, setThreadId] = useState(newThreadId);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
@@ -269,7 +273,7 @@ export default function App() {
           <span className="status-indicator ready" />
         </div>
         <div className="sidebar-footer">
-          <ShieldCheck size={15} /><span>Endpoint requests stay in this browser</span>
+          <ShieldCheck size={15} /><span>Profiles stored in this browser</span>
           <button className="icon-button help-button" aria-label="Endpoint help" title="Endpoint settings are stored in this browser">
             <CircleHelp size={16} />
           </button>
@@ -394,7 +398,7 @@ function Brand({ compact = false }) {
   return (
     <>
       <div className="brand-mark"><Sparkles size={compact ? 16 : 18} /></div>
-      {!compact && <div><div className="brand-name">agent<span>desk</span></div><div className="brand-caption">API chat workspace</div></div>}
+      {compact ? <div className="brand-name">agent<span>desk</span></div> : <div><div className="brand-name">agent<span>desk</span></div><div className="brand-caption">API chat workspace</div></div>}
     </>
   );
 }
