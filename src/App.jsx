@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Activity, ArrowDown, ArrowUp, Bot, Check, ChevronDown, CircleHelp,
-  MessageSquarePlus, Settings2, Sparkles, X,
+  MessageSquarePlus, Settings2, ShieldCheck, Sparkles, X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 const ENDPOINTS_KEY = "chat-agent-ui:endpoints";
 const ACTIVE_ENDPOINT_KEY = "chat-agent-ui:active-endpoint";
-const DEFAULT_TEMPLATE = "{\n  \"message\": \"{{message}}\",\n  \"thread_id\": \"{{thread_id}}\"\n}";
+const BACKEND_URL_KEY = "chat-agent-ui:backend-url";
+const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
+const DEFAULT_TEMPLATE = "{\n  \"message\": \"{{message}}\",\n  \"thread_id\": \"{{thread_id}}\",\n  \"user_name\": \"{{user_name}}\"\n}";
 const SUGGESTIONS = [
   { title: "Say hello", text: "Hello! What can you help me with?" },
   { title: "Test a question", text: "Give me a short example of what you can do." },
@@ -19,6 +21,7 @@ function makeEndpoint(name = "Local FastAPI") {
   return {
     id: crypto.randomUUID(),
     name,
+    baseUrl: localStorage.getItem(BACKEND_URL_KEY) || DEFAULT_BACKEND_URL,
     url: "/api/v1/chat",
     requestTemplate: DEFAULT_TEMPLATE,
     responsePath: "answer",
@@ -49,7 +52,7 @@ function fillTemplate(value, variables) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fillTemplate(item, variables)]));
   }
   if (typeof value === "string") {
-    return value.replace(/\{\{(message|thread_id)\}\}/g, (_, key) => variables[key]);
+    return value.replace(/\{\{(message|thread_id|user_name)\}\}/g, (_, key) => variables[key]);
   }
   return value;
 }
@@ -65,6 +68,36 @@ function responseText(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function formatApiError(payload, status) {
+  const detail = payload?.detail ?? payload?.message ?? payload?.error ?? payload;
+  if (Array.isArray(detail)) return "HTTP " + status + ": " + detail.map((item) => {
+    const path = Array.isArray(item.loc) ? item.loc.filter((part) => part !== "body").join(".") : "";
+    return (path ? path + ": " : "") + (item.msg || item.type || "Invalid value");
+  }).join("; ");
+  if (typeof detail === "string") return "HTTP " + status + ": " + detail;
+  if (detail && typeof detail === "object") return "HTTP " + status + ": " + JSON.stringify(detail);
+  return "HTTP " + status + ": Check the required request fields in the endpoint schema.";
+}
+function resolveSchema(schema, components) {
+  if (!schema || typeof schema !== "object") return {};
+  if (schema.$ref) return resolveSchema(components?.schemas?.[schema.$ref.split("/").pop()], components);
+  return schema;
+}
+function templateFromSchema(schema) {
+  const body = {};
+  for (const [name, field] of Object.entries(schema?.properties || {})) {
+    if (/^(message|prompt|query|input)$/i.test(name)) body[name] = "{{message}}";
+    else if (/^(thread_?id|conversation_?id)$/i.test(name)) body[name] = "{{thread_id}}";
+    else if (/^(user_?name|username)$/i.test(name)) body[name] = "{{user_name}}";
+    else if (field.type === "integer" || field.type === "number") body[name] = 0;
+    else if (field.type === "boolean") body[name] = false;
+    else if (field.type === "array") body[name] = [];
+    else if (field.type === "object") body[name] = {};
+    else body[name] = "";
+  }
+  return Object.keys(body).length ? JSON.stringify(body, null, 2) : DEFAULT_TEMPLATE;
+}
+
 export default function App() {
   const [initialState] = useState(() => {
     const savedEndpoints = loadEndpoints();
@@ -72,17 +105,22 @@ export default function App() {
     return {
       endpoints: savedEndpoints,
       activeId: savedEndpoints.some((item) => item.id === savedId) ? savedId : savedEndpoints[0].id,
+      firstRun: !localStorage.getItem(ENDPOINTS_KEY),
     };
   });
   const [endpoints, setEndpoints] = useState(initialState.endpoints);
   const [activeId, setActiveId] = useState(initialState.activeId);
+  const [username, setUsername] = useState("");
+  const [started, setStarted] = useState(false);
+  const [postOperations, setPostOperations] = useState([]);
+  const [schemaNotice, setSchemaNotice] = useState("");
   const [threadId, setThreadId] = useState(newThreadId);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(initialState.firstRun);
+  const [editing, setEditing] = useState({ ...initialState.endpoints[0] });
   const [settingsError, setSettingsError] = useState("");
   const listRef = useRef(null);
   const inputRef = useRef(null);
@@ -105,14 +143,19 @@ export default function App() {
 
   function startNewChat() {
     setThreadId(newThreadId());
-    setMessages([]);
-    setError("");
-    inputRef.current?.focus();
+    setUsername(""); setStarted(false);
+    setMessages([]); setError("");
+  }
+
+  function beginConversation(event) {
+    event.preventDefault();
+    if (!username.trim()) return;
+    setUsername(username.trim()); setStarted(true); inputRef.current?.focus();
   }
 
   function selectEndpoint(event) {
     const id = event.target.value;
-    setActiveId(id);
+    setActiveId(id); setUsername(""); setStarted(false);
     localStorage.setItem(ACTIVE_ENDPOINT_KEY, id);
     setThreadId(newThreadId());
     setMessages([]);
@@ -120,15 +163,41 @@ export default function App() {
   }
 
   function openNewEndpoint() {
-    setSettingsError("");
-    setEditing({ ...makeEndpoint("New endpoint"), url: "", requestTemplate: DEFAULT_TEMPLATE, responsePath: "answer" });
+    setSettingsError(""); setSchemaNotice(""); setPostOperations([]);
+    setEditing({ ...makeEndpoint("New endpoint"), url: "", baseUrl: localStorage.getItem(BACKEND_URL_KEY) || DEFAULT_BACKEND_URL, requestTemplate: DEFAULT_TEMPLATE, responsePath: "answer" });
     setSettingsOpen(true);
   }
 
   function openEndpointSettings() {
-    setSettingsError("");
-    setEditing({ ...activeEndpoint });
+    setSettingsError(""); setSchemaNotice(""); setPostOperations([]);
+    setEditing({ ...activeEndpoint, baseUrl: activeEndpoint.baseUrl || localStorage.getItem(BACKEND_URL_KEY) || DEFAULT_BACKEND_URL });
     setSettingsOpen(true);
+  }
+
+  async function discoverPostOperations() {
+    setSettingsError(""); setSchemaNotice("");
+    try {
+      const base = (editing.baseUrl || localStorage.getItem(BACKEND_URL_KEY) || DEFAULT_BACKEND_URL).trim().replace(/\/+$/, "");
+      if (!/^https?:\/\//i.test(base)) throw new Error("Enter a backend URL starting with http:// or https://.");
+      const response = await fetch(base + "/openapi.json");
+      if (!response.ok) throw new Error("Could not load OpenAPI schema (HTTP " + response.status + ").");
+      const spec = await response.json(); const operations = [];
+      for (const [path, methods] of Object.entries(spec.paths || {})) {
+        if (!methods?.post) continue;
+        const schema = resolveSchema(methods.post.requestBody?.content?.["application/json"]?.schema, spec.components);
+        operations.push({ key: "POST " + path, path, title: methods.post.summary || methods.post.operationId || path, schema, properties: schema.properties || {}, required: schema.required || [] });
+      }
+      if (!operations.length) throw new Error("The OpenAPI document has no POST endpoints.");
+      setPostOperations(operations); setSchemaNotice("Found " + operations.length + " POST endpoint(s). Select your chat route.");
+    } catch (err) { setSettingsError(err.message || "Could not read schema. Check backend URL and CORS settings."); }
+  }
+  function choosePostOperation(event) {
+    const operation = postOperations.find((item) => item.key === event.target.value);
+    if (!operation) return;
+    const base = (editing.baseUrl || localStorage.getItem(BACKEND_URL_KEY) || DEFAULT_BACKEND_URL).replace(/\/+$/, "");
+    setEditing((current) => ({ ...current, baseUrl: base, url: base + operation.path, name: operation.title,
+      requestTemplate: templateFromSchema(operation.schema),
+      schemaSummary: operation.key + " · fields: " + Object.keys(operation.properties).join(", ") + (operation.required.length ? " · required: " + operation.required.join(", ") : "") }));
   }
 
   function saveEndpoint(event) {
@@ -153,6 +222,7 @@ export default function App() {
       ? endpoints.map((item) => item.id === editing.id ? { ...editing, name: editing.name.trim(), url: editing.url.trim() } : item)
       : [...endpoints, { ...editing, name: editing.name.trim(), url: editing.url.trim() }];
     persistEndpoints(next, editing.id);
+    localStorage.setItem(BACKEND_URL_KEY, editing.baseUrl || DEFAULT_BACKEND_URL);
     setThreadId(newThreadId());
     setMessages([]);
     setSettingsOpen(false);
@@ -174,13 +244,14 @@ export default function App() {
 
   async function sendMessage(text = draft) {
     const message = text.trim();
-    if (!message || sending || !activeEndpoint) return;
+    if (!message || sending || !activeEndpoint || !started || !username.trim()) return;
 
     let requestBody;
     try {
       requestBody = fillTemplate(JSON.parse(activeEndpoint.requestTemplate), {
         message,
         thread_id: threadId,
+        user_name: username.trim(),
       });
     } catch {
       setError("This endpoint has an invalid request template. Open endpoint settings to fix it.");
@@ -208,10 +279,7 @@ export default function App() {
         // Plain text responses are valid too.
       }
       if (!response.ok) {
-        const detail = payload && typeof payload === "object"
-          ? payload.detail || payload.message || payload.error
-          : payload;
-        throw new Error(detail || "The endpoint returned HTTP " + response.status + ".");
+        throw new Error(formatApiError(payload, response.status));
       }
       const answer = responseText(getResponseValue(payload, activeEndpoint.responsePath));
       if (!answer) throw new Error("No response value found. Check the response field in endpoint settings.");
@@ -305,13 +373,17 @@ export default function App() {
                 <div className="eyebrow">CHAT WORKSPACE</div>
                 <h2>What would you<br />like to explore?</h2>
                 <p>Choose an endpoint and start a conversation. You can save multiple endpoints for testing.</p>
-                <div className="suggestion-grid">
+                {started ? <div className="suggestion-grid">
                   {SUGGESTIONS.map((item) => (
                     <button className="suggestion-card" key={item.title} onClick={() => sendMessage(item.text)} disabled={sending}>
                       <span>{item.title}</span><ArrowUp size={15} />
                     </button>
                   ))}
-                </div>
+                </div> : <form className="conversation-start" onSubmit={beginConversation}>
+                  <label htmlFor="conversation-username">Username</label>
+                  <input id="conversation-username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Enter your username" autoComplete="username" />
+                  <button className="save-button" type="submit" disabled={!username.trim()}>Start conversation</button>
+                </form>}
               </div>
             ) : (
               <div className="messages">
@@ -319,9 +391,9 @@ export default function App() {
                   <article className={"message-row " + message.role} key={message.id}>
                     {message.role === "assistant"
                       ? <div className="message-avatar assistant-small"><Bot size={15} /></div>
-                      : <div className="message-avatar user-small">Y</div>}
+                      : <div className="message-avatar user-small">{username.slice(0, 1).toUpperCase()}</div>}
                     <div className="message-content">
-                      <div className="message-meta"><strong>{message.role === "assistant" ? "Assistant" : "You"}</strong><time>{displayTime(message.time)}</time></div>
+                      <div className="message-meta"><strong>{message.role === "assistant" ? "Assistant" : username}</strong><time>{displayTime(message.time)}</time></div>
                       {message.role === "assistant" ? (
                         <div className="message-bubble assistant markdown-content">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
@@ -341,10 +413,10 @@ export default function App() {
             {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error"><X size={15} /></button></div>}
             <form className="composer" onSubmit={submit}>
               <textarea ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={handleKeyDown}
-                placeholder="Message the assistant…" rows={1} aria-label="Message" disabled={sending} />
-              <div className="composer-toolbar"><span className="composer-hint">{activeEndpoint?.name}</span>
+                placeholder={started ? "Message as " + username + "…" : "Enter a username to start chatting…"} rows={1} aria-label="Message" disabled={!started || sending} />
+              <div className="composer-toolbar"><span className="composer-hint">{started ? username + " · " + threadId : activeEndpoint?.name}</span>
                 <div className="composer-actions"><span className="enter-hint">Enter to send · Shift+Enter for new line</span>
-                  <button className="send-button" type="submit" aria-label="Send message" disabled={!draft.trim() || sending}><ArrowDown size={16} /></button>
+                  <button className="send-button" type="submit" aria-label="Send message" disabled={!started || !draft.trim() || sending}><ArrowDown size={16} /></button>
                 </div>
               </div>
             </form>
@@ -359,10 +431,17 @@ export default function App() {
         }}>
           <section className="endpoint-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <div className="modal-heading">
-              <div><div className="eyebrow">CONNECTION SETTINGS</div><h2 id="settings-title">Configure endpoint</h2></div>
+              <div><div className="eyebrow">CONNECTION SETTINGS</div><h2 id="settings-title">{initialState.firstRun ? "Connect your API" : "Configure endpoint"}</h2></div>
               <button className="icon-button" onClick={() => { setSettingsOpen(false); setEditing(null); }} aria-label="Close settings"><X size={18} /></button>
             </div>
-            <p className="modal-description">Save endpoint profiles in this browser. Use a full chat URL, or a relative path served through the local Vite proxy.</p>
+            <p className="modal-description">Enter your backend base URL, load its OpenAPI schema, then choose the POST route your chat uses.</p>
+            <div className="settings-form">
+            <label>Backend base URL<input value={editing.baseUrl || localStorage.getItem(BACKEND_URL_KEY) || DEFAULT_BACKEND_URL} onChange={(event) => setEditing({ ...editing, baseUrl: event.target.value })} placeholder="http://127.0.0.1:8000" /></label>
+            <button type="button" className="cancel-button" onClick={discoverPostOperations}>Load POST endpoints from /openapi.json</button>
+            {schemaNotice && <div className="schema-summary">{schemaNotice}</div>}
+            {postOperations.length > 0 && <label>POST endpoint<select className="schema-select" onChange={choosePostOperation} defaultValue=""><option value="">Choose a chat endpoint…</option>{postOperations.map((item) => <option key={item.key} value={item.key}>{item.key} — {item.title}</option>)}</select></label>}
+            {editing.schemaSummary && <div className="schema-summary">{editing.schemaSummary}</div>}
+            </div>
             <form className="settings-form" onSubmit={saveEndpoint}>
               <label>Endpoint name
                 <input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} placeholder="My FastAPI agent" />
@@ -373,7 +452,7 @@ export default function App() {
               <label>Request body template
                 <textarea className="template-input" value={editing.requestTemplate} onChange={(event) => setEditing({ ...editing, requestTemplate: event.target.value })} spellCheck="false" />
               </label>
-              <div className="template-help">Use <code>{"{{message}}"}</code> and <code>{"{{thread_id}}"}</code> as values in the JSON template.</div>
+              <div className="template-help">Use <code>{"{{message}}"}</code>, <code>{"{{thread_id}}"}</code>, and <code>{"{{user_name}}"}</code>. Username is entered at the start of each conversation.</div>
               <label>Response field
                 <input value={editing.responsePath} onChange={(event) => setEditing({ ...editing, responsePath: event.target.value })} placeholder="answer or choices.0.message.content" />
               </label>
