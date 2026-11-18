@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity, ArrowDown, ArrowUp, Bot, Check, ChevronDown, CircleHelp,
-  Command, MessageSquarePlus, PanelLeftClose, ShieldCheck, Sparkles,
+  MessageSquarePlus, ShieldCheck, Sparkles,
   UserRound, X,
 } from "lucide-react";
 
@@ -119,11 +119,10 @@ export default function App() {
         <div className="brand">
           <div className="brand-mark"><Sparkles size={18} /></div>
           <div><div className="brand-name">refund<span>desk</span></div><div className="brand-caption">AI support workspace</div></div>
-          <button className="icon-button sidebar-collapse" aria-label="Close sidebar"><PanelLeftClose size={17} /></button>
         </div>
 
         <button className="new-chat-button" onClick={startNewChat}>
-          <MessageSquarePlus size={17} /><span>New conversation</span><span className="shortcut"><Command size={11} /> K</span>
+          <MessageSquarePlus size={17} /><span>New conversation</span>
         </button>
 
         <div className="side-label">WORKSPACE</div>
